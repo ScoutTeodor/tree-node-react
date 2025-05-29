@@ -1,0 +1,40 @@
+.tree {
+  list-style: none;
+  padding-left: 20px;
+  position: relative;
+}
+
+.tree > li {
+  position: relative;
+  padding-left: 20px;
+  margin: 6px 0;
+}
+
+.tree-line::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 12px;
+  height: 100%;
+  border-left: 1px solid #ccc;
+  border-bottom: 1px solid #ccc;
+}
+
+.node-label {
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: inline-block;
+  transition: background 0.2s;
+}
+
+.node-label:hover {
+  background-color: #f0f0f0;
+}
+
+.node-buttons button {
+  margin-left: 4px;
+  font-size: 0.8rem;
+  padding: 2px 6px;
+}
