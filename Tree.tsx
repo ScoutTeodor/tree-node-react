@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
+import { useDrag, useDrop } from "react-dnd";
 import "./Tree.css";
 
 export interface TreeNode {
@@ -12,7 +13,9 @@ interface TreeProps {
   onNodeClick: (node: TreeNode) => void;
 }
 
+const ITEM_TYPE = "TREE_NODE";
 const STORAGE_KEY = "tree-data";
+
 const Tree: React.FC<TreeProps> = ({ data, onNodeClick }) => {
   const [tree, setTree] = useState<TreeNode[]>(() => {
     const storedTree = localStorage.getItem(STORAGE_KEY);
@@ -32,37 +35,49 @@ const Tree: React.FC<TreeProps> = ({ data, onNodeClick }) => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(tree));
   }, [tree]);
 
+  // Проверка, является ли childId в поддереве nodeId
+  const isDescendant = useCallback(
+    (nodes: TreeNode[], nodeId: string, childId: string): boolean => {
+      for (const node of nodes) {
+        if (node.id === nodeId) {
+          const stack: TreeNode[] = [node];
+          while (stack.length) {
+            const curr = stack.pop()!;
+            if (curr.id === childId) return true;
+            if (curr.children) stack.push(...curr.children);
+          }
+          return false;
+        }
+        if (node.children && isDescendant(node.children, nodeId, childId)) {
+          return true;
+        }
+      }
+      return false;
+    },
+    []
+  );
+
   const handleAddRoot = () => {
     const name = prompt("Введите имя корневого узла:");
     if (!name) return;
-    const newNode: TreeNode = {
-      id: Date.now().toString(),
-      name,
-      children: [],
-    };
-    setTree([...tree, newNode]);
+    const newNode: TreeNode = { id: Date.now().toString(), name, children: [] };
+    setTree((prev) => [...prev, newNode]);
   };
-
   const handleAdd = (parentId: string) => {
     const name = prompt("Введите имя нового узла:");
     if (!name) return;
-    const newNode: TreeNode = {
-      id: Date.now().toString(),
-      name,
-      children: [],
-    };
-    setTree(addNode(tree, parentId, newNode));
+    const newNode: TreeNode = { id: Date.now().toString(), name, children: [] };
+    setTree((prev) => addNode(prev, parentId, newNode));
   };
-
   const handleEdit = (node: TreeNode) => {
     const name = prompt("Новое имя узла:", node.name);
     if (!name) return;
-    setTree(editNode(tree, node.id, name));
+    setTree((prev) => editNode(prev, node.id, name));
   };
 
   const handleDelete = (nodeId: string) => {
     if (!window.confirm("Удалить узел и всех потомков?")) return;
-    setTree(deleteNode(tree, nodeId));
+    setTree((prev) => deleteNode(prev, nodeId));
   };
 
   const handleReset = () => {
@@ -123,18 +138,101 @@ const Tree: React.FC<TreeProps> = ({ data, onNodeClick }) => {
   function deleteNode(nodes: TreeNode[], nodeId: string): TreeNode[] {
     return nodes
       .filter((node) => node.id !== nodeId)
-      .map((node) =>
-        node.children
-          ? { ...node, children: deleteNode(node.children, nodeId) }
-          : node
-      );
+      .map((node) => ({
+        ...node,
+        children: node.children ? deleteNode(node.children, nodeId) : undefined,
+      }));
   }
 
-  const renderTree = (nodes: TreeNode[]) => (
-    <ul className="tree">
-      {nodes.map((node) => (
-        <li key={node.id}>
-          <div className="tree-line" />
+  function moveNode(
+    nodes: TreeNode[],
+    dragId: string,
+    dropId: string | null
+  ): TreeNode[] {
+    let draggedNode: TreeNode | null = null;
+
+    function remove(nodesArr: TreeNode[]): TreeNode[] {
+      return nodesArr
+        .filter((n) => {
+          if (n.id === dragId) {
+            draggedNode = n;
+            return false;
+          }
+          return true;
+        })
+        .map((n) => ({
+          ...n,
+          children: n.children ? remove(n.children) : undefined,
+        }));
+    }
+
+    const withoutDrag = remove(nodes);
+    if (!draggedNode) return nodes;
+
+    if (dropId === null) {
+      return [...withoutDrag, draggedNode];
+    }
+    if (isDescendant(nodes, dragId, dropId)) {
+      return nodes;
+    }
+    function insert(nodesArr: TreeNode[]): TreeNode[] {
+      return nodesArr.map((n) => {
+        if (n.id === dropId) {
+          const children = n.children
+            ? [...n.children, draggedNode!]
+            : [draggedNode!];
+          return { ...n, children };
+        }
+        return { ...n, children: n.children ? insert(n.children) : undefined };
+      });
+    }
+    return insert(withoutDrag);
+  }
+
+  // Компонент для узла
+
+  interface DragItem {
+    id: string;
+    type: string;
+  }
+
+  const TreeNodeItem: React.FC<{ node: TreeNode }> = ({ node }) => {
+    // Падение на узел
+    const [{ canDrop: nodeCanDrop }, dropRef] = useDrop({
+      accept: ITEM_TYPE,
+      canDrop: (item: DragItem) => {
+        if (item.id === node.id) return false;
+        return !isDescendant(tree, item.id, node.id);
+      },
+      drop: (item: DragItem) => {
+        setTree((prev) => moveNode(prev, item.id, node.id));
+      },
+      collect: (monitor) => ({
+        canDrop: monitor.canDrop(),
+      }),
+    });
+
+    // Перетаскивание узла вместе с потомками
+    const [{ isDragging }, dragRef] = useDrag({
+      type: ITEM_TYPE,
+      item: { id: node.id, type: ITEM_TYPE },
+      collect: (monitor) => ({ isDragging: !!monitor.isDragging() }),
+    });
+
+    return (
+      <li
+        key={node.id}
+        className={isDragging ? "dragging" : nodeCanDrop ? "can-drop" : ""}
+        style={{ opacity: isDragging ? 0.5 : 1 }}
+      >
+        {/* Объединяем dragRef и dropRef на одном элементе */}
+        <div
+          className="node-content"
+          ref={(el) => {
+            dragRef(el);
+            dropRef(el);
+          }}
+        >
           <span className="node-label" onClick={() => onNodeClick(node)}>
             {node.name}
           </span>
@@ -143,13 +241,30 @@ const Tree: React.FC<TreeProps> = ({ data, onNodeClick }) => {
             <button onClick={() => handleEdit(node)}>Edit</button>
             <button onClick={() => handleDelete(node.id)}>Delete</button>
           </span>
-          {node.children &&
-            node.children.length > 0 &&
-            renderTree(node.children)}
-        </li>
-      ))}
-    </ul>
-  );
+        </div>
+
+        {node.children && node.children.length > 0 && (
+          <ul>
+            {node.children.map((child) => (
+              <TreeNodeItem key={child.id} node={child} />
+            ))}
+          </ul>
+        )}
+      </li>
+    );
+  };
+
+  // Drop на корневую область
+  const [{ canDrop: rootCanDrop }, dropRootRef] = useDrop({
+    accept: ITEM_TYPE,
+    canDrop: (_item, monitor) => monitor.isOver({ shallow: true }),
+    drop: (item: DragItem) => {
+      setTree((prev) => moveNode(prev, item.id, null));
+    },
+    collect: (monitor) => ({
+      canDrop: monitor.canDrop(),
+    }),
+  });
 
   return (
     <div>
@@ -164,7 +279,11 @@ const Tree: React.FC<TreeProps> = ({ data, onNodeClick }) => {
       {tree.length === 0 ? (
         <p>Дерево пусто. Добавьте первый узел.</p>
       ) : (
-        renderTree(tree)
+        <ul className="tree" ref={dropRootRef}>
+          {tree.map((node) => (
+            <TreeNodeItem key={node.id} node={node} />
+          ))}
+        </ul>
       )}
     </div>
   );
