@@ -14,26 +14,45 @@ interface TreeProps {
 }
 
 const ITEM_TYPE = "TREE_NODE";
-const STORAGE_KEY = "tree-data";
+
+const API_URL = (window as any).API_URL || "http://localhost:4000";
 
 const Tree: React.FC<TreeProps> = ({ data, onNodeClick }) => {
-  const [tree, setTree] = useState<TreeNode[]>(() => {
-    const storedTree = localStorage.getItem(STORAGE_KEY);
-    if (storedTree) {
-      try {
-        const parsed = JSON.parse(storedTree);
-        if (Array.isArray(parsed)) return parsed;
-      } catch {
-        console.warn("Ошибка парсинга localStorage");
-      }
-    }
-    return data.length > 0 ? data : []; // fallback
-  });
+  const [tree, setTree] = useState<TreeNode[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Сохраняем изменения дерева в localStorage
+  // Загрузка с сервера при монтировании
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(tree));
-  }, [tree]);
+    fetch(`${API_URL}/api/tree`)
+      .then((res) => {
+        if (!res.ok) throw new Error("Не удалось загрузить дерево");
+        return res.json() as Promise<TreeNode[]>;
+      })
+      .then((serverData) => {
+        if (Array.isArray(serverData) && serverData.length > 0) {
+          setTree(serverData);
+        } else {
+          setTree(data);
+        }
+      })
+      .catch(() => {
+        // на случай ошибки — fallback на data из пропсов
+        setTree(data);
+      })
+      .finally(() => setLoading(false));
+  }, [data]);
+
+  // Отправляем на сервер при любом изменении дерева
+  useEffect(() => {
+    if (loading) return;
+    fetch(`${API_URL}/api/tree`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(tree),
+    }).catch((err) => {
+      console.error("Ошибка сохранения дерева:", err);
+    });
+  }, [tree, loading]);
 
   // Проверка, является ли childId в поддереве nodeId
   const isDescendant = useCallback(
@@ -83,7 +102,6 @@ const Tree: React.FC<TreeProps> = ({ data, onNodeClick }) => {
   const handleReset = () => {
     if (window.confirm("Сбросить дерево до исходного состояния?")) {
       setTree(data);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     }
   };
 
@@ -197,8 +215,7 @@ const Tree: React.FC<TreeProps> = ({ data, onNodeClick }) => {
   }
 
   const TreeNodeItem: React.FC<{ node: TreeNode }> = ({ node }) => {
-    // Падение на узел
-    const [{ canDrop: nodeCanDrop }, dropRef] = useDrop({
+    const [{ canDrop }, dropRef] = useDrop({
       accept: ITEM_TYPE,
       canDrop: (item: DragItem) => {
         if (item.id === node.id) return false;
@@ -222,7 +239,7 @@ const Tree: React.FC<TreeProps> = ({ data, onNodeClick }) => {
     return (
       <li
         key={node.id}
-        className={isDragging ? "dragging" : nodeCanDrop ? "can-drop" : ""}
+        className={isDragging ? "dragging" : canDrop ? "can-drop" : ""}
         style={{ opacity: isDragging ? 0.5 : 1 }}
       >
         {/* Объединяем dragRef и dropRef на одном элементе */}
@@ -265,6 +282,10 @@ const Tree: React.FC<TreeProps> = ({ data, onNodeClick }) => {
       canDrop: monitor.canDrop(),
     }),
   });
+
+  if (loading) {
+    return <p>Загрузка дерева…</p>;
+  }
 
   return (
     <div>
